@@ -16,7 +16,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
+from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
 
 
@@ -27,7 +27,7 @@ def new_id() -> str:
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
     role: Mapped[str] = mapped_column(String(40), nullable=False, default="client")
@@ -58,7 +58,7 @@ class Profile(Base):
 class Company(Base):
     __tablename__ = "companies"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     auth_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), unique=True
     )
@@ -72,7 +72,7 @@ class Company(Base):
 class Driver(Base):
     __tablename__ = "drivers"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     auth_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), unique=True
     )
@@ -93,7 +93,7 @@ class EmailVerification(Base):
     __tablename__ = "email_verifications"
     __table_args__ = (UniqueConstraint("user_id", "purpose", name="uq_email_verifications_user_purpose"),)
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     purpose: Mapped[str] = mapped_column(String(24), nullable=False)
     code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -104,7 +104,7 @@ class EmailVerification(Base):
 class AuthSession(Base):
     __tablename__ = "auth_sessions"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
@@ -116,7 +116,7 @@ class AuthSession(Base):
 class ErrantOrder(Base):
     __tablename__ = "errant_orders"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     fee: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     location: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -146,7 +146,7 @@ class ErrantOrder(Base):
 class ErrantItem(Base):
     __tablename__ = "items"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     errant_id: Mapped[str] = mapped_column(
         ForeignKey("errant_orders.id", ondelete="CASCADE"), index=True
     )
@@ -159,7 +159,7 @@ class ErrantItem(Base):
 class GasOrder(Base):
     __tablename__ = "gas_orders"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
@@ -187,8 +187,8 @@ class GasOrder(Base):
 class Activity(Base):
     __tablename__ = "activities"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    reference_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
+    reference_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False, index=True)
     type: Mapped[str] = mapped_column(String(40), nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     route: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -216,7 +216,7 @@ class Conversation(Base):
         UniqueConstraint("company_id", "driver_id", name="uq_conversations_company_driver"),
     )
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     user_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE")
     )
@@ -240,7 +240,7 @@ class Message(Base):
         Index("ix_messages_conversation_created", "conversation_id", "created_at"),
     )
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     conversation_id: Mapped[str] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
@@ -270,11 +270,11 @@ class Message(Base):
 class Call(Base):
     __tablename__ = "calls"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     conversation_id: Mapped[str | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL")
     )
-    order_id: Mapped[str | None] = mapped_column(String(36))
+    order_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
     caller_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE")
     )
@@ -294,11 +294,11 @@ class Call(Base):
 class Payment(Base):
     __tablename__ = "payments"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    order_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    order_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), index=True)
     provider_payment_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
