@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import date, datetime
+from typing import Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -20,6 +21,25 @@ class DriverResponse(ORMModel):
     company_id: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    company_role: str | None = None
+
+
+class DriverTripResponse(BaseModel):
+    id: str
+    company_id: str | None
+    driver_id: str
+    created_at: datetime
+
+
+class DriverDailyStatisticsResponse(BaseModel):
+    date: date
+    day_name: str
+    trip_count: int
+    total_earnings: float
+
+
+class DriverOrderStatusUpdate(BaseModel):
+    status: Literal["accepted", "in_progress", "completed", "cancelled"]
 
 
 class ErrantItemInput(BaseModel):
@@ -168,6 +188,7 @@ class ActivityResponse(ORMModel):
 class ConversationInput(BaseModel):
     driver_id: str
     company_id: str | None = None
+    user_id: str | None = None
 
 
 class ConversationResponse(ORMModel):

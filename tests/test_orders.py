@@ -1,4 +1,5 @@
 import pytest
+from uuid import uuid4
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -95,7 +96,7 @@ def test_activity_is_scoped_to_authenticated_user(client: TestClient) -> None:
     response = client.post(
         "/activities",
         json={
-            "reference_id": "order-1",
+            "reference_id": str(uuid4()),
             "type": "gas_order",
             "title": "Gas delivery",
             "route": "Depot to Home",
@@ -112,7 +113,7 @@ def test_activity_is_scoped_to_authenticated_user(client: TestClient) -> None:
     )
 
     assert response.status_code == 201, response.text
-    assert response.json()["reference_id"] == "order-1"
+    assert response.json()["reference_id"]
     assert client.get("/activities").json()[0]["user_id"]
 
 

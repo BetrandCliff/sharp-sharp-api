@@ -1,17 +1,23 @@
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth_routes import get_current_user
+from app.auth_schemas import ProfileResponse
 from app.chat_routes import _websocket_user
 from app.database import get_db
 from app.domain_models import (
     Activity,
     Company,
+    Conversation,
     Driver,
     ErrantItem,
     ErrantOrder,
     GasOrder,
+    Profile,
     User,
 )
 from app.domain_schemas import (
@@ -19,6 +25,9 @@ from app.domain_schemas import (
     ActivityResponse,
     CompanyResponse,
     DriverResponse,
+    DriverDailyStatisticsResponse,
+    DriverOrderStatusUpdate,
+    DriverTripResponse,
     ErrantInput,
     ErrantResponse,
     ErrantUpdate,
@@ -70,6 +79,213 @@ def _ensure_order_access(order: GasOrder | ErrantOrder | None, user: User, db: S
         and not _is_assigned_driver(user, order.driver_id, db)
     ):
         raise HTTPException(status_code=404, detail="Order not found")
+
+
+def _driver_for_user(user: User, db: Session) -> Driver:
+    driver = db.scalar(select(Driver).where(Driver.auth_id == user.id))
+    if driver is None:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+    return driver
+
+
+def _week_interval(week_start: date | None) -> tuple[date, datetime, datetime]:
+    today = datetime.now(timezone.utc).date()
+    start_date = week_start or (today - timedelta(days=today.weekday()))
+    start = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+    return start_date, start, start + timedelta(days=7)
+
+
+def _set_completion_time(order: GasOrder | ErrantOrder, new_status: str) -> None:
+    if new_status.strip().lower() == "completed":
+        if order.completed_at is None:
+            order.completed_at = datetime.now(timezone.utc)
+    else:
+        order.completed_at = None
+
+
+@router.get("/drivers/me", response_model=DriverResponse)
+def get_current_driver(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DriverResponse:
+    driver = _driver_for_user(user, db)
+    company = db.get(Company, driver.company_id) if driver.company_id else None
+    response = DriverResponse.model_validate(driver)
+    return response.model_copy(
+        update={"company_role": company.role if company is not None else None}
+    )
+
+
+@router.get(
+    "/drivers/me/clients/{client_user_id}",
+    response_model=ProfileResponse,
+)
+def get_assigned_client_profile(
+    client_user_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ProfileResponse:
+    driver = _driver_for_user(user, db)
+    has_assigned_order = any(
+        db.scalar(query) is not None
+        for query in (
+            select(GasOrder.id).where(
+                GasOrder.user_id == client_user_id,
+                GasOrder.driver_id == driver.id,
+            ),
+            select(ErrantOrder.id).where(
+                ErrantOrder.user_id == client_user_id,
+                ErrantOrder.driver_id == driver.id,
+            ),
+            select(Conversation.id).where(
+                Conversation.user_id == client_user_id,
+                Conversation.driver_id == driver.id,
+            ),
+        )
+    )
+    client = db.get(User, client_user_id)
+    if not has_assigned_order or client is None:
+        raise HTTPException(status_code=404, detail="Client profile not found")
+    profile = db.get(Profile, client_user_id)
+    if profile is not None:
+        return ProfileResponse.model_validate(profile)
+    return ProfileResponse(
+        user_id=client.id,
+        user_name="",
+        email=client.email,
+    )
+
+
+@router.get("/drivers/me/gas-orders", response_model=list[GasOrderResponse])
+def list_driver_gas_orders(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[GasOrderResponse]:
+    driver = _driver_for_user(user, db)
+    orders = db.scalars(
+        select(GasOrder)
+        .where(GasOrder.driver_id == driver.id)
+        .order_by(GasOrder.created_at.desc())
+    ).all()
+    return [_gas_order_response(order, db) for order in orders]
+
+
+@router.get("/drivers/me/errants", response_model=list[ErrantResponse])
+def list_driver_errants(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[ErrantOrder]:
+    driver = _driver_for_user(user, db)
+    return list(
+        db.scalars(
+            _errant_query()
+            .where(ErrantOrder.driver_id == driver.id)
+            .order_by(ErrantOrder.created_at.desc())
+        ).all()
+    )
+
+
+@router.get("/drivers/me/trips", response_model=list[DriverTripResponse])
+def list_driver_trips(
+    week_start: date | None = None,
+    driver_id: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[DriverTripResponse]:
+    driver = _driver_for_user(user, db)
+    if driver_id is not None and driver_id != driver.id:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+    _, start, end = _week_interval(week_start)
+    gas_orders = db.scalars(
+        select(GasOrder)
+        .where(
+            GasOrder.driver_id == driver.id,
+            GasOrder.status.ilike("completed"),
+            GasOrder.completed_at >= start,
+            GasOrder.completed_at < end,
+        )
+        .order_by(GasOrder.completed_at.asc())
+    ).all()
+    errants = db.scalars(
+        select(ErrantOrder)
+        .where(
+            ErrantOrder.driver_id == driver.id,
+            ErrantOrder.status.ilike("completed"),
+            ErrantOrder.completed_at >= start,
+            ErrantOrder.completed_at < end,
+        )
+        .order_by(ErrantOrder.completed_at.asc())
+    ).all()
+    trips = [
+        DriverTripResponse(
+            id=order.id,
+            company_id=order.supplier_id,
+            driver_id=driver.id,
+            created_at=order.completed_at,
+        )
+        for order in gas_orders
+    ]
+    trips.extend(
+        DriverTripResponse(
+            id=order.id,
+            company_id=order.company_id,
+            driver_id=driver.id,
+            created_at=order.completed_at,
+        )
+        for order in errants
+    )
+    return sorted(trips, key=lambda trip: trip.created_at)
+
+
+@router.get(
+    "/drivers/me/weekly-statistics",
+    response_model=list[DriverDailyStatisticsResponse],
+)
+def get_driver_weekly_statistics(
+    week_start: date | None = None,
+    driver_id: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[DriverDailyStatisticsResponse]:
+    driver = _driver_for_user(user, db)
+    if driver_id is not None and driver_id != driver.id:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+    start_date, start, end = _week_interval(week_start)
+    gas_orders = db.scalars(
+        select(GasOrder).where(
+            GasOrder.driver_id == driver.id,
+            GasOrder.status.ilike("completed"),
+            GasOrder.completed_at >= start,
+            GasOrder.completed_at < end,
+        )
+    ).all()
+    errants = db.scalars(
+        select(ErrantOrder).where(
+            ErrantOrder.driver_id == driver.id,
+            ErrantOrder.status.ilike("completed"),
+            ErrantOrder.completed_at >= start,
+            ErrantOrder.completed_at < end,
+        )
+    ).all()
+    counts = [0] * 7
+    earnings = [Decimal("0")] * 7
+    for order in gas_orders:
+        day_index = (order.completed_at.date() - start_date).days
+        counts[day_index] += 1
+        earnings[day_index] += Decimal(str(order.price))
+    for order in errants:
+        day_index = (order.completed_at.date() - start_date).days
+        counts[day_index] += 1
+        earnings[day_index] += Decimal(str(order.fee))
+    return [
+        DriverDailyStatisticsResponse(
+            date=start_date + timedelta(days=index),
+            day_name=(start_date + timedelta(days=index)).strftime("%a"),
+            trip_count=counts[index],
+            total_earnings=float(earnings[index]),
+        )
+        for index in range(7)
+    ]
 
 
 @router.websocket("/ws/orders/{order_id}")
@@ -189,11 +405,19 @@ async def update_errant(
     user: User = Depends(get_current_user),
 ) -> ErrantOrder:
     order = db.scalar(_errant_query().where(ErrantOrder.id == order_id))
-    if order is None or order.user_id != user.id:
+    if order is None:
+        raise HTTPException(status_code=404, detail="Errant order not found")
+    is_owner = order.user_id == user.id
+    is_driver = _is_assigned_driver(user, order.driver_id, db)
+    if not is_owner and not is_driver:
         raise HTTPException(status_code=404, detail="Errant order not found")
     changes = request.model_dump(exclude_unset=True)
+    if is_driver and not is_owner and set(changes) - {"status"}:
+        raise HTTPException(status_code=403, detail="Drivers can only update order status")
     if set(changes) & {"driver_id", "company_id"} and user.role != "admin":
         raise HTTPException(status_code=403, detail="Only an administrator can assign an errant order")
+    if "status" in changes:
+        _set_completion_time(order, changes["status"])
     items = changes.pop("items", None)
     for key, value in changes.items():
         setattr(order, key, value)
@@ -303,6 +527,8 @@ async def update_gas_order(
     if "supplier_id" in changes and changes["supplier_id"]:
         if db.get(Company, changes["supplier_id"]) is None:
             raise HTTPException(status_code=404, detail="Supplier not found")
+    if "status" in changes:
+        _set_completion_time(order, changes["status"])
     for key, value in changes.items():
         setattr(order, key, value)
     db.commit()

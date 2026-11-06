@@ -73,6 +73,27 @@ def create_conversation(
     driver = db.get(Driver, request.driver_id)
     if driver is None:
         raise HTTPException(status_code=404, detail="Driver not found")
+    if user.role == "driver":
+        if driver.auth_id != user.id or request.user_id is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if db.get(User, request.user_id) is None:
+            raise HTTPException(status_code=404, detail="Client not found")
+        existing = db.scalar(
+            select(Conversation).where(
+                Conversation.user_id == request.user_id,
+                Conversation.driver_id == driver.id,
+            )
+        )
+        if existing is not None:
+            return existing
+        conversation = Conversation(
+            user_id=request.user_id,
+            driver_id=driver.id,
+        )
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+        return conversation
     if request.company_id:
         company = db.get(Company, request.company_id)
         if company is None or company.auth_id != user.id:
@@ -87,6 +108,8 @@ def create_conversation(
             return existing
         conversation = Conversation(company_id=company.id, driver_id=driver.id)
     else:
+        if request.user_id is not None and request.user_id != user.id:
+            raise HTTPException(status_code=403, detail="Not allowed to create this conversation")
         existing = db.scalar(
             select(Conversation).where(
                 Conversation.user_id == user.id,
@@ -106,11 +129,20 @@ def create_conversation(
 def list_conversations(
     company_id: str | None = None,
     driver_id: str | None = None,
+    user_id: str | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[Conversation]:
     query = select(Conversation)
-    if company_id:
+    if user_id:
+        driver = db.scalar(select(Driver).where(Driver.auth_id == user.id))
+        if driver is None:
+            raise HTTPException(status_code=403, detail="Not allowed to read driver conversations")
+        query = query.where(
+            Conversation.driver_id == driver.id,
+            Conversation.user_id == user_id,
+        )
+    elif company_id:
         company = db.get(Company, company_id)
         if company is None or company.auth_id != user.id:
             raise HTTPException(status_code=403, detail="Not allowed to read company conversations")

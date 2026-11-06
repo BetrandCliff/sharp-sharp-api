@@ -63,6 +63,7 @@ class Company(Base):
         ForeignKey("users.id", ondelete="SET NULL"), unique=True
     )
     company_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    authorization_id: Mapped[str | None] = mapped_column( String(40), unique=True, nullable=True)
     role: Mapped[str] = mapped_column(String(40), nullable=False, default="supplier")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -138,6 +139,7 @@ class ErrantOrder(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     items: Mapped[list["ErrantItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
@@ -182,6 +184,7 @@ class GasOrder(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Activity(Base):
